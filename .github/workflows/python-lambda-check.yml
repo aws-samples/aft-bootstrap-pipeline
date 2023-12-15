@@ -2,8 +2,8 @@ name: Python Lambda Checks
 
 on:
   push:
-    paths:
-      - '**.py'
+    branches:
+      - main
 
 jobs:
   lint-and-security-check:

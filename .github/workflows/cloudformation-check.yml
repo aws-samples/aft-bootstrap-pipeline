@@ -2,9 +2,8 @@ name: CloudFormation Checks
 
 on:
   push:
-    paths:
-      - '**.yml'
-      - '**.yaml'
+    branches:
+      - main
 
 jobs:
   run-checkov-and-cfn-nag:
