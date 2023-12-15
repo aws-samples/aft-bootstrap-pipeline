@@ -28,7 +28,7 @@ jobs:
 
     - name: Install cfn-nag
       run: |
-        gem install cfn-nag
+        sudo gem install cfn-nag
 
     - name: Run cfn-nag
       run: cfn_nag_scan --input-path code/aft-deployment-pipeline.yaml
