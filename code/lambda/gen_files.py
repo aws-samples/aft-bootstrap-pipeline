@@ -42,8 +42,10 @@ def handler(event, context):
 
     s3_client = boto3.client('s3')
     bucket_name = os.environ['BUCKET_NAME']
-    aft_version = "" if os.environ['AFT_VERSION'] == 'latest' else f"?ref={os.environ['AFT_VERSION']}"
-    
+    aft_version = (
+    "" if os.environ['AFT_VERSION'] == 'latest' 
+    else f"?ref={os.environ['AFT_VERSION']}"
+    )
 
     # Create in-memory zip file
     zip_buffer = io.BytesIO()
