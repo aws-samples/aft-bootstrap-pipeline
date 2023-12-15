@@ -1,0 +1,834 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: "AFT bootstrap deployment"
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "AFT (Account Factory for Terraform) bootstrap pipeline"
+        Parameters:
+          - pRepositoryName
+          - pBranchName
+          - pCodeBuildDockerImage
+      - Label:
+          default: "Generate default AFT files?"
+        Parameters:
+          - pGenerateAFTFiles
+      - Label:
+          default: "AFT deployment file parameters"
+        Parameters:
+          - pLogArchiveAccountID
+          - pAuditAccountID
+          - pAFTAccountID
+          - pAFTMainRegion
+          - pAFTSecondaryRegion
+          - pAFTMetricsReporting
+          - pAFTFeatureCloudtrailDataEvents
+          - pAFTFeatureEnterpriseSupport
+          - pAFTFeatureDeleteDefaultVpcsEnabled
+          - pTerraformVersion
+    ParameterLabels:
+      pRepositoryName:
+        default: Source repository to store AFT bootstrap module
+      pBranchName:
+        default: Source repository branch
+      pCodeBuildDockerImage:
+        default: CodeBuild docker base image version to run the pipeline
+      pGenerateAFTFiles:
+        default: "Whether to generate default aft deployment files or not"
+      pLogArchiveAccountID:
+        default: "Log Archive Account ID in AWS Control Tower"
+      pAuditAccountID:
+        default: "Audit Account ID in AWS Control Tower"
+      pAFTAccountID:
+        default: "AFT Management Account ID"
+      pAFTMainRegion:
+        default: "AFT Main Region (same as AWS Control Tower)"
+      pAFTSecondaryRegion:
+        default: "AFT Secondary Region"
+      pAFTMetricsReporting:
+        default: "Whether to enable AFT Metrics reporting or not (default: false)"
+      pAFTFeatureCloudtrailDataEvents:
+        default: "Whether to enable AWS CloudTrail data events or not (default: false)"
+      pAFTFeatureEnterpriseSupport:
+        default: "Whether to enable AWS Enterprise Support or not (default: false)"
+      pAFTFeatureDeleteDefaultVpcsEnabled:
+        default: "Whether to delete default VPCs or not (default: false)"
+      pAFTVersion:
+        default: "AFT version to be deployed (default: latest)"
+      pTerraformVersion:
+        default: "Terraform version to be used on AFT pipelines (default: 1.5.7)"
+
+Parameters:
+  # AFT Bootstrap Pipeline Params
+  pRepositoryName:
+    Type: String
+    Default: aft-setup
+    Description: "Input the repository name"
+  
+  pBranchName:
+    Type: String
+    Default: main
+    Description: "Input the branch name"
+
+  pCodeBuildDockerImage:
+    Type: String
+    Default: "aws/codebuild/amazonlinux2-x86_64-standard:4.0"
+    Description: "Input the AWS CodeBuild docker base image"
+
+  # Whether to gen files or not
+  pGenerateAFTFiles:
+    Type: String
+    Default: true
+    AllowedValues: [true, false]
+    Description: "Change to false IF you don't want to generate the default files"
+
+  # AWS Control Tower Required Params
+  pLogArchiveAccountID:
+    Type: String
+    Description: "Input the Log Archive Account ID"
+
+  pAuditAccountID:
+    Type: String
+    Description: "Input the Audit Account ID"
+          
+  pAFTAccountID:
+    Type: String
+    Description: "Input the AFT Account ID"
+
+  pAFTMainRegion:
+    Type: String
+    Description: "Input the Control Tower Main Region"
+
+  # AFT Optional Params
+  pAFTSecondaryRegion:
+    Type: String
+    Description: "Input the Control Tower Secondary Region"
+
+  pAFTMetricsReporting:
+    Type: String
+    Default: false
+    AllowedValues: [true, false]
+    Description: "Input the Metrics option"
+
+  # AFT Feature Flags Params
+  pAFTFeatureCloudtrailDataEvents:
+    Type: String
+    Default: false
+    AllowedValues: [true, false]
+    Description: "Input the Cloudtrail option"
+
+  pAFTFeatureEnterpriseSupport:
+    Type: String
+    Default: false
+    AllowedValues: [true, false]
+    Description: "Input the Enterprise Support option"
+
+  pAFTFeatureDeleteDefaultVpcsEnabled:
+    Type: String
+    AllowedValues: [true, false]
+    Default: false
+    Description: "Input the default VPC deletion option"
+
+  # Version Params
+  pAFTVersion:
+    Type: String
+    Default: "latest"
+    Description: "Input the AFT version (according to https://github.com/aws-ia/terraform-aws-control_tower_account_factory/releases)"
+
+  pTerraformVersion:
+    Type: String
+    Default: "1.5.7"
+    Description: "Input the terraform version"
+
+Conditions:
+  CreateAFTResources: !Equals [ !Ref pGenerateAFTFiles, true ]
+  DoNotCreateAFTResources: !Not [ !Equals [ !Ref pGenerateAFTFiles, true ] ]
+
+Resources:
+
+  rTerraformFilesBucket:
+    #checkov:skip=CKV_AWS_18:There is no need to enable log in this bucket.
+    Condition: CreateAFTResources
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: 'AES256'
+      BucketName: !Sub "${pRepositoryName}-tf-files-generator-${AWS::AccountId}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true 
+      VersioningConfiguration:
+        Status: Enabled
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W35
+            reason: "There is no need to enable log in this bucket."      
+          - id: W51
+            reason: "This bucket will be accessible only within the account to store the terraform files"   
+
+  rTerraformFilesGenerator:
+    #checkov:skip=CKV_AWS_117:This lambda cannot run inside the vpc because is intended to run in the management account
+    #checkov:skip=CKV_AWS_116:This lambda doesn't need DLQ because it runs inside the cfn
+    #checkov:skip=CKV_AWS_173:The default AWS Encryption is enough for this lambda
+    Condition: CreateAFTResources
+    Type: AWS::Lambda::Function
+    Properties:
+      ReservedConcurrentExecutions: 10
+      Handler: index.handler
+      Role: !GetAtt rTFGenLambdaExecutionRoleWithS3Policy.Arn
+      Runtime: python3.10
+      Timeout: 120
+      FunctionName: !Sub "${pRepositoryName}-tf-files-generator-${AWS::AccountId}"
+      Environment:
+        Variables:
+          MANAGEMENT_ACCOUNT_ID: !Ref "AWS::AccountId"
+          LOG_ARCHIVE_ACCOUNT_ID: !Ref pLogArchiveAccountID
+          AUDIT_ACCOUNT_ID: !Ref pAuditAccountID
+          AFT_ACCOUNT_ID: !Ref pAFTAccountID
+          HOME_REGION: !Ref pAFTMainRegion
+          SECONDARY_REGION: !Ref pAFTSecondaryRegion
+          AFT_METRICS_REPORTING: !Ref pAFTMetricsReporting
+          AFT_FEATURE_CLOUDTRAIL_DATA_EVENTS: !Ref pAFTFeatureCloudtrailDataEvents
+          AFT_FEATURE_ENTERPRISE_SUPPORT: !Ref pAFTFeatureEnterpriseSupport
+          AFT_FEATURE_DELETE_DEFAULT_VPCS_ENABLED: !Ref pAFTFeatureDeleteDefaultVpcsEnabled
+          AFT_VERSION: !Ref pAFTVersion
+          TERRAFORM_VERSION: !Ref pTerraformVersion
+          BUCKET_NAME: !Sub "${pRepositoryName}-tf-backend-${AWS::AccountId}"
+          REGION: !Ref "AWS::Region"
+      Code:
+        ZipFile: |                
+          """
+          This module contains the AWS Lambda function for generating Terraform configuration files.
+
+          The Lambda function defined in this module is triggered by AWS CloudFormation events. 
+          It handles the creation, update, and deletion of resources by generating the necessary Terraform 
+          configuration files and uploading them to an S3 bucket. The function's behavior is controlled by 
+          environment variables and the type of request received from CloudFormation.
+
+          Functions:
+              handler(event, context): The main function that handles CloudFormation custom resource events.
+          """
+          import os
+          import zipfile
+          import io
+          # pylint: disable=import-error
+          import boto3
+          import cfnresponse
+
+          def handler(event, context):
+              """
+              Handle Lambda function invocations for CloudFormation custom resources.
+
+              This function processes CloudFormation custom resource events, generating 
+              Terraform configuration files and uploading them to an S3 bucket, 
+              depending on the environment variables and CloudFormation request type.
+
+              Args:
+                  event (dict): The event passed by the AWS CloudFormation service, 
+                                which includes details about the request type (Create, Update, Delete).
+                  context (LambdaContext): Provides runtime information about the Lambda function execution.
+
+              Returns:
+                  None: The function sends a response directly to CloudFormation and does not return a value.
+              """
+              if event['RequestType'] == 'Delete':
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                  return
+
+              if event['RequestType'] == 'Update':
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                  return
+
+              s3_client = boto3.client('s3')
+              bucket_name = os.environ['BUCKET_NAME']
+              aft_version = "" if os.environ['AFT_VERSION'] == 'latest' else f"?ref={os.environ['AFT_VERSION']}"
+
+              # Create in-memory zip file
+              zip_buffer = io.BytesIO()
+              with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+
+                  # main.tf content
+                  main_tf_content = f'''
+          # Copyright Amazon.com, Inc. or its affiliates. All rights reserved.
+          # SPDX-License-Identifier: Apache-2.0
+
+          module "aft" {{
+          source = "github.com/aws-ia/terraform-aws-control_tower_account_factory{aft_version}"
+
+          # Required variables
+          ct_management_account_id  = "{os.environ['MANAGEMENT_ACCOUNT_ID']}"
+          log_archive_account_id    = "{os.environ['LOG_ARCHIVE_ACCOUNT_ID']}"
+          audit_account_id          = "{os.environ['AUDIT_ACCOUNT_ID']}"
+          aft_management_account_id = "{os.environ['AFT_ACCOUNT_ID']}"
+          ct_home_region            = "{os.environ['HOME_REGION']}"
+
+          # Optional variables
+          tf_backend_secondary_region = "{os.environ['SECONDARY_REGION']}"
+          aft_metrics_reporting       = "{os.environ['AFT_METRICS_REPORTING']}"
+
+          # AFT Feature flags
+          aft_feature_cloudtrail_data_events      = "{os.environ['AFT_FEATURE_CLOUDTRAIL_DATA_EVENTS']}"
+          aft_feature_enterprise_support          = "{os.environ['AFT_FEATURE_ENTERPRISE_SUPPORT']}"
+          aft_feature_delete_default_vpcs_enabled = "{os.environ['AFT_FEATURE_DELETE_DEFAULT_VPCS_ENABLED']}"
+
+          # Terraform variables
+          terraform_version      = "{os.environ['TERRAFORM_VERSION']}"
+          terraform_distribution = "OSS"
+          }}
+                  '''
+                  zip_file.writestr('terraform/main.tf', main_tf_content)
+
+                  # backend.tf content
+                  backend_tf_content = f'''
+          # Copyright Amazon.com, Inc. or its affiliates. All rights reserved.
+          # SPDX-License-Identifier: Apache-2.0
+
+          terraform {{
+          backend "s3" {{
+              bucket = "{bucket_name}"
+              key    = "aft-setup"
+              region = "{os.environ['REGION']}"
+          }}
+          }}
+                  '''
+                  zip_file.writestr('terraform/backend.tf', backend_tf_content)
+
+              try:
+                  # Move the pointer of zip_buffer to the beginning of the buffer
+                  zip_buffer.seek(0)
+                  # Upload zip file
+                  s3_client.put_object(
+                      Bucket=bucket_name,
+                      Key='terraform_files.zip',
+                      Body=zip_buffer.getvalue()
+                  )
+
+
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+              except Exception as e: # pylint: disable=broad-exception-caught
+                  print(e)
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {})
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W89
+            reason: "This lambda cannot run inside the vpc because is intended to run in the management account"  
+
+  rTFGenLambdaExecutionRoleWithS3Policy:
+    Condition: CreateAFTResources
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [lambda.amazonaws.com]
+            Action: ['sts:AssumeRole']
+      Policies:
+        - PolicyName: LambdaS3AccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                Resource: !Sub 'arn:aws:s3:::${rTerraformFilesBucket}/*'
+        - PolicyName: LambdaCloudWatchLogsPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${pRepositoryName}-tf-files-generator-${AWS::AccountId}:*'
+
+  rTerraformFilesGeneratorTrigger:
+    Condition: CreateAFTResources
+    Type: Custom::TerraformFilesGenerator
+    Properties:
+      ServiceToken: !GetAtt rTerraformFilesGenerator.Arn
+
+  rCodeCommitAftRepoWithCode:
+    Condition: CreateAFTResources
+    Type: AWS::CodeCommit::Repository
+    DependsOn: rTerraformFilesGeneratorTrigger
+    Properties:
+      RepositoryName: !Ref pRepositoryName
+      RepositoryDescription: The AFT setup repository
+      Code:
+        S3:
+          Bucket: !Sub "${pRepositoryName}-tf-files-generator-${AWS::AccountId}"
+          Key: "terraform_files.zip"
+
+  rCodeCommitAftRepoWithoutCode:
+    Condition: DoNotCreateAFTResources
+    Type: AWS::CodeCommit::Repository
+    Properties:
+      RepositoryName: !Ref pRepositoryName
+      RepositoryDescription: The AFT setup repository
+
+  rTerraformBackendBucket:
+    #checkov:skip=CKV_AWS_18:There is no need to enable log in this bucket.
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: 'AES256'
+      BucketName: !Sub "${pRepositoryName}-tf-backend-${AWS::AccountId}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true 
+      VersioningConfiguration:
+        Status: Enabled
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W35
+            reason: "There is no need to enable log in this bucket."      
+          - id: W51
+            reason: "This bucket will be accessible only within the account to store the terraform state"             
+
+  rCodePipelineArtifactBucket:
+    #checkov:skip=CKV_AWS_18:There is no need to enable log in this bucket.
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: 'AES256'
+      BucketName: !Sub "${pRepositoryName}-codepipeline-artifacts-${AWS::AccountId}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true 
+      VersioningConfiguration:
+        Status: Enabled
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W35
+            reason: "There is no need to enable log in this bucket."      
+          - id: W51
+            reason: "This bucket will be accessible only within the account to store the pipeline artifacts"        
+
+  rCodePipelineServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: CodePipelinePermissions
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - codecommit:GetBranch
+                  - codecommit:GetCommit
+                  - codecommit:UploadArchive
+                  - codecommit:GetUploadArchiveStatus
+                  - codecommit:CancelUploadArchive
+                Resource: !Sub "arn:${AWS::Partition}:codecommit:${AWS::Region}:${AWS::AccountId}:${pRepositoryName}"
+              - Effect: Allow
+                Action:
+                  - codebuild:StartBuild
+                  - codebuild:BatchGetBuilds
+                Resource: 
+                  - !GetAtt rCodeBuildTerraformPlan.Arn
+                  - !GetAtt rCodeBuildTerraformApply.Arn
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:GetBucketVersioning
+                Resource: !Sub arn:${AWS::Partition}:s3:::${rCodePipelineArtifactBucket}/*         
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: F38
+            reason: "Wildcard is required for these IAM actions"
+          - id: W11
+            reason: "Wildcard is required for these IAM actions"      
+
+  rCodeBuildServiceRole:
+    #checkov:skip=CKV_AWS_111:Wildcard is required for these IAM actions
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: LogAccess
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents   
+                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:*"
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:List*
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:GetBucketVersioning
+                  - s3:PutObject
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:s3:::${rCodePipelineArtifactBucket}"
+                  - !Sub "arn:${AWS::Partition}:s3:::${rCodePipelineArtifactBucket}/*"
+                  - !Sub "arn:${AWS::Partition}:s3:::${rTerraformBackendBucket}"
+                  - !Sub "arn:${AWS::Partition}:s3:::${rTerraformBackendBucket}/*"
+        - PolicyName: CodeBuildPermissions
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:CreateNetworkInterfacePermission
+                Resource: !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:network-interface/*"
+                Condition: 
+                  StringEquals:
+                    ec2:AuthorizedService: "codebuild.amazonaws.com"
+              - Effect: Allow
+                Action:
+                  - ec2:CreateNetworkInterface
+                  - ec2:DescribeDhcpOptions
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DeleteNetworkInterface
+                  - ec2:DescribeSubnets
+                  - ec2:DescribeSecurityGroups
+                  - ec2:DescribeVpcs
+                Resource: !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:*"
+              - Effect: Allow
+                Action:
+                  - organizations:Describe*
+                  - organizations:List*
+                Resource: "*"
+        - PolicyName: IAMPermissions
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sts:AssumeRole
+                Resource: !Sub "arn:${AWS::Partition}:iam::*:role/AWSControlTowerExecution"
+              - Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/aft-*"
+              - Effect: Allow
+                Action:
+                  - iam:CreateRole
+                  - iam:TagRole
+                  - iam:AttachRolePolicy
+                  - iam:PutRolePolicy
+                  - iam:List*
+                  - iam:Get*
+                Resource: 
+                  - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/aft-control-tower-events-rule"
+                  - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/AWSAFTExecution"
+                  - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/AWSAFTService"
+        - PolicyName: EventBridgePermissions
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - events:List*
+                  - events:DeleteRule
+                  - events:DisableRule
+                  - events:EnableRule
+                  - events:PutTargets
+                  - events:RemoveTargets
+                Resource: 
+                  - !Sub "arn:${AWS::Partition}:events:*:${AWS::AccountId}:rule/aft-capture-ct-events"
+              - Effect: Allow
+                Action:
+                  - events:DescribeRule
+                  - events:TagResource
+                  - events:UntagResource
+                  - events:PutRule
+                Resource: "*"
+                Condition:
+                  StringEqualsIfExists:
+                    events:creatorAccount: "${aws:PrincipalAccount}"
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: F38
+            reason: "Wildcard is required for these IAM actions"
+          - id: W11
+            reason: "Wildcard is required for these IAM actions"
+  
+  rCodeBuildTerraformPlan:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Type: LINUX_CONTAINER
+        Image: !Ref pCodeBuildDockerImage
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - Name: REPOSITORY_NAME
+            Value: !Ref pRepositoryName
+          - Name: REPOSITORY_BRANCH
+            Value: !Ref pBranchName
+      Name: "aft-bootstrap-pipeline-tf-plan"
+      ServiceRole: !Ref rCodeBuildServiceRole
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: |
+          version: 0.2
+          env:
+            variables:
+              TERRAFORM_VERSION: "1.5.7"
+          phases:
+            install:
+              commands:
+                - |
+                  set -e
+                  echo $TERRAFORM_VERSION
+                  echo "Installing Terraform"
+                  cd /tmp
+                  curl -q -o terraform_${TERRAFORM_VERSION}_linux_amd64.zip https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip
+                  unzip -q -o terraform_${TERRAFORM_VERSION}_linux_amd64.zip
+                  mv terraform /usr/local/bin/
+                  terraform -no-color --version
+            pre_build:
+              on-failure: ABORT
+              commands:
+                - |
+                  cd $CODEBUILD_SRC_DIR/terraform
+                  echo "Initializing and validating terraform"
+                  terraform fmt -no-color
+                  terraform init -no-color
+                  terraform validate -no-color        
+            build:
+              on-failure: ABORT
+              commands:
+                - | 
+                  echo "Running terraform plan"
+                  terraform plan -no-color -out output.tfplan
+            post_build:
+              commands:
+                - echo "Terraform plan successfully run"
+          artifacts:
+            files:
+              - '**/*'
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W32
+            reason: "CodeBuild is using the managed CMK for Amazon Simple Storage Service (Amazon S3) by default"
+    
+  rCodeBuildTerraformApply:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Type: LINUX_CONTAINER
+        Image: !Ref pCodeBuildDockerImage
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - Name: REPOSITORY_NAME
+            Value: !Ref pRepositoryName
+          - Name: REPOSITORY_BRANCH
+            Value: !Ref pBranchName
+      Name: "aft-bootstrap-pipeline-tf-apply"
+      ServiceRole: !Ref rCodeBuildServiceRole
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: |
+          version: 0.2
+          env:
+            variables:
+              TERRAFORM_VERSION: "1.5.7"
+          phases:
+            install:
+              commands:
+                - |
+                  set -e
+                  echo $TERRAFORM_VERSION
+                  echo "Installing terraform"
+                  cd /tmp
+                  curl -q -o terraform_${TERRAFORM_VERSION}_linux_amd64.zip https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip
+                  unzip -q -o terraform_${TERRAFORM_VERSION}_linux_amd64.zip
+                  mv terraform /usr/local/bin/
+                  terraform -no-color --version
+            build:
+              on-failure: ABORT
+              commands:
+                - |
+                  cd $CODEBUILD_SRC_DIR/terraform
+                  echo "Running terraform apply"
+                  terraform apply -no-color -input=false --auto-approve "output.tfplan"
+            post_build:
+              commands:
+                - echo "AFT setup deployment successfully"
+          artifacts:
+            files:
+              - '**/*'
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W32
+            reason: "CodeBuild is using the managed CMK for Amazon Simple Storage Service (Amazon S3) by default"
+
+  rCodePipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      ArtifactStore:
+        Type: S3
+        Location: !Ref rCodePipelineArtifactBucket    
+      Name: "aft-bootstrap-pipeline"
+      RoleArn: !GetAtt rCodePipelineServiceRole.Arn  
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: !Sub "branch-${pBranchName}"
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Version: 1
+                Provider: CodeCommit
+              Configuration:
+                RepositoryName: !Ref pRepositoryName
+                BranchName: !Ref pBranchName
+                PollForSourceChanges: false
+              OutputArtifacts:
+                - Name: code
+              RunOrder: 1
+        - Name: Build
+          Actions:
+            - Name: terraform-plan
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: 1
+                Provider: CodeBuild
+              Configuration:
+                ProjectName: !Ref rCodeBuildTerraformPlan
+              InputArtifacts:
+                - Name: code
+              OutputArtifacts:
+                - Name: plan
+              RunOrder: 1
+        - Name: Approval
+          Actions:
+            - Name: approve
+              ActionTypeId:
+                Category: Approval
+                Owner: AWS
+                Version: '1'
+                Provider: Manual
+              Configuration:
+                CustomData: "Check the terraform plan output and approve before the changes are implemented."
+        - Name: Deploy
+          Actions:
+            - Name: terraform-apply
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: 1
+                Provider: CodeBuild
+              Configuration:
+                ProjectName: !Ref rCodeBuildTerraformApply
+              InputArtifacts:
+                - Name: plan
+              OutputArtifacts:
+                - Name: apply
+              RunOrder: 1
+
+  rEventRulePipelineCodeChange:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: aft-bootstrap-pipeline-code-change-trigger
+      Description: "Rule to trigger the CodePipeline based on code changes"
+      EventPattern:
+        source:
+          - "aws.codecommit"
+        detail-type:
+          - "CodeCommit Repository State Change"
+        resources:
+          - !Sub "arn:${AWS::Partition}:codecommit:${AWS::Region}:${AWS::AccountId}:${pRepositoryName}"
+        detail:
+          event:
+            - referenceCreated
+            - referenceUpdated
+          referenceType:
+            - branch
+          referenceName:
+            - main
+      Targets:
+        - Arn: !Sub "arn:${AWS::Partition}:codepipeline:${AWS::Region}:${AWS::AccountId}:${rCodePipeline}"
+          RoleArn: !GetAtt rEventsRuleRole.Arn
+          Id: aft-bootstrap-pipeline-target
+  
+  rEventsRuleRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - events.amazonaws.com
+            Action: sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: StartPipelineExecution
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: codepipeline:StartPipelineExecution
+                Resource: !Sub "arn:${AWS::Partition}:codepipeline:${AWS::Region}:${AWS::AccountId}:${rCodePipeline}"
+
+Outputs:
+  TerraformBackendBucketName:
+    Value: !Ref rTerraformBackendBucket
