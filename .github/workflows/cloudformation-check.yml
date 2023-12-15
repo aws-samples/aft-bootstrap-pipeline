@@ -1,0 +1,34 @@
+name: CloudFormation Checks
+
+on:
+  push:
+    paths:
+      - '**.yml'
+      - '**.yaml'
+
+jobs:
+  run-checkov-and-cfn-nag:
+    name: Run Checkov and cfn-nag
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.x'
+
+    - name: Install Checkov
+      run: pip install checkov
+
+    - name: Run Checkov
+      run: checkov -f code/aft-deployment-pipeline.yaml
+
+    - name: Install cfn-nag
+      run: |
+        gem install cfn-nag
+
+    - name: Run cfn-nag
+      run: cfn_nag_scan --input-path code/aft-deployment-pipeline.yaml
