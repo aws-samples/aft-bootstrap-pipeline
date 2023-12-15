@@ -1,0 +1,32 @@
+name: Python Lambda Checks
+
+on:
+  push:
+    paths:
+      - '**.py'
+
+jobs:
+  lint-and-security-check:
+    name: Lint and Security Check
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.10'
+
+    - name: Install Pylint
+      run: pip install pylint
+
+    - name: Run Pylint
+      run: pylint code/lambda/gen_files.py
+
+    - name: Install Bandit
+      run: pip install bandit
+
+    - name: Run Bandit
+      run: bandit -r code/lambda/gen_files.py
