@@ -41,6 +41,7 @@ def handler(event, context):
         return
 
     s3_client = boto3.client('s3')
+    # pylint: disable=line-too-long
     aft_version = "" if os.environ['AFT_VERSION'] == 'latest' else f"?ref={os.environ['AFT_VERSION']}"
 
     # Create in-memory zip file
@@ -108,13 +109,13 @@ backend "s3" {{
         response_data['FileName'] = 'terraform_files.zip'
 
         cfnresponse.send(
-                event=event, 
-                context=context, 
-                responseStatus=cfnresponse.SUCCESS, 
-                responseData=response_data, 
-                physicalResourceId='',
-                noEcho=True
-            )
+            event=event,
+            context=context,
+            responseStatus=cfnresponse.SUCCESS,
+            responseData=response_data,
+            physicalResourceId='',
+            noEcho=True
+        )
     except Exception as e: # pylint: disable=broad-exception-caught
         print(e)
         cfnresponse.send(event, context, cfnresponse.FAILED, {})
