@@ -41,11 +41,7 @@ def handler(event, context):
         return
 
     s3_client = boto3.client('s3')
-    bucket_name = os.environ['BUCKET_NAME']
-    aft_version = (
-    "" if os.environ['AFT_VERSION'] == 'latest' 
-    else f"?ref={os.environ['AFT_VERSION']}"
-    )
+    aft_version = "" if os.environ['AFT_VERSION'] == 'latest' else f"?ref={os.environ['AFT_VERSION']}"
 
     # Create in-memory zip file
     zip_buffer = io.BytesIO()
@@ -77,7 +73,7 @@ aft_feature_delete_default_vpcs_enabled = "{os.environ['AFT_FEATURE_DELETE_DEFAU
 
 # Terraform variables
 terraform_version      = "{os.environ['TERRAFORM_VERSION']}"
-terraform_distribution = "OSS"
+terraform_distribution = "oss"
 }}
         '''
         zip_file.writestr('terraform/main.tf', main_tf_content)
@@ -89,9 +85,9 @@ terraform_distribution = "OSS"
 
 terraform {{
 backend "s3" {{
-    bucket = "{bucket_name}"
-    key    = "aft-setup"
-    region = "{os.environ['REGION']}"
+    bucket = "{os.environ['TF_BACKEND_BUCKET_NAME']}"
+    key    = "aft-setup.tfstate"
+    region = "{os.environ['HOME_REGION']}"
 }}
 }}
         '''
@@ -102,13 +98,23 @@ backend "s3" {{
         zip_buffer.seek(0)
         # Upload zip file
         s3_client.put_object(
-            Bucket=bucket_name,
+            Bucket=os.environ['TF_FILES_GEN_BUCKET_NAME'],
             Key='terraform_files.zip',
             Body=zip_buffer.getvalue()
         )
 
+        response_data = {}
+        response_data['BucketName'] = os.environ['TF_FILES_GEN_BUCKET_NAME']
+        response_data['FileName'] = 'terraform_files.zip'
 
-        cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+        cfnresponse.send(
+                event=event, 
+                context=context, 
+                responseStatus=cfnresponse.SUCCESS, 
+                responseData=response_data, 
+                physicalResourceId='',
+                noEcho=True
+            )
     except Exception as e: # pylint: disable=broad-exception-caught
         print(e)
         cfnresponse.send(event, context, cfnresponse.FAILED, {})

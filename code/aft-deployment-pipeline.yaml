@@ -98,12 +98,12 @@ Parameters:
 
   pAFTMainRegion:
     Type: String
-    Description: "Input the Control Tower Main Region"
+    Description: "Input the Control Tower Main Region (e.g. us-east-1)"
 
   # AFT Optional Params
   pAFTSecondaryRegion:
     Type: String
-    Description: "Input the Control Tower Secondary Region"
+    Description: "Input the Control Tower Secondary Region (e.g. us-west-2)"
 
   pAFTMetricsReporting:
     Type: String
@@ -142,14 +142,13 @@ Parameters:
     Description: "Input the terraform version"
 
 Conditions:
-  CreateAFTResources: !Equals [ !Ref pGenerateAFTFiles, true ]
-  DoNotCreateAFTResources: !Not [ !Equals [ !Ref pGenerateAFTFiles, true ] ]
-
+  cGenerateAFTFiles: !Equals [ !Ref pGenerateAFTFiles, true ]
+  
 Resources:
 
   rTerraformFilesBucket:
     #checkov:skip=CKV_AWS_18:There is no need to enable log in this bucket.
-    Condition: CreateAFTResources
+    Condition: cGenerateAFTFiles
     Type: AWS::S3::Bucket
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
@@ -178,15 +177,16 @@ Resources:
     #checkov:skip=CKV_AWS_117:This lambda cannot run inside the vpc because is intended to run in the management account
     #checkov:skip=CKV_AWS_116:This lambda doesn't need DLQ because it runs inside the cfn
     #checkov:skip=CKV_AWS_173:The default AWS Encryption is enough for this lambda
-    Condition: CreateAFTResources
+    Condition: cGenerateAFTFiles
+    DependsOn: rTerraformFilesBucket
     Type: AWS::Lambda::Function
     Properties:
       ReservedConcurrentExecutions: 10
       Handler: index.handler
-      Role: !GetAtt rTFGenLambdaExecutionRoleWithS3Policy.Arn
+      Role: !GetAtt rTerraformFilesLambdaExecutionRole.Arn
       Runtime: python3.10
       Timeout: 120
-      FunctionName: !Sub "${pRepositoryName}-tf-files-generator-${AWS::AccountId}"
+      FunctionName: !Sub "${pRepositoryName}-tf-files-generator"
       Environment:
         Variables:
           MANAGEMENT_ACCOUNT_ID: !Ref "AWS::AccountId"
@@ -201,8 +201,8 @@ Resources:
           AFT_FEATURE_DELETE_DEFAULT_VPCS_ENABLED: !Ref pAFTFeatureDeleteDefaultVpcsEnabled
           AFT_VERSION: !Ref pAFTVersion
           TERRAFORM_VERSION: !Ref pTerraformVersion
-          BUCKET_NAME: !Sub "${pRepositoryName}-tf-backend-${AWS::AccountId}"
-          REGION: !Ref "AWS::Region"
+          TF_BACKEND_BUCKET_NAME: !Sub "${pRepositoryName}-tf-backend-${AWS::AccountId}"
+          TF_FILES_GEN_BUCKET_NAME: !Sub "${pRepositoryName}-tf-files-generator-${AWS::AccountId}"
       Code:
         ZipFile: |                
           """
@@ -248,7 +248,6 @@ Resources:
                   return
 
               s3_client = boto3.client('s3')
-              bucket_name = os.environ['BUCKET_NAME']
               aft_version = "" if os.environ['AFT_VERSION'] == 'latest' else f"?ref={os.environ['AFT_VERSION']}"
 
               # Create in-memory zip file
@@ -281,7 +280,7 @@ Resources:
 
           # Terraform variables
           terraform_version      = "{os.environ['TERRAFORM_VERSION']}"
-          terraform_distribution = "OSS"
+          terraform_distribution = "oss"
           }}
                   '''
                   zip_file.writestr('terraform/main.tf', main_tf_content)
@@ -293,9 +292,9 @@ Resources:
 
           terraform {{
           backend "s3" {{
-              bucket = "{bucket_name}"
-              key    = "aft-setup"
-              region = "{os.environ['REGION']}"
+              bucket = "{os.environ['TF_BACKEND_BUCKET_NAME']}"
+              key    = "aft-setup.tfstate"
+              region = "{os.environ['HOME_REGION']}"
           }}
           }}
                   '''
@@ -306,13 +305,23 @@ Resources:
                   zip_buffer.seek(0)
                   # Upload zip file
                   s3_client.put_object(
-                      Bucket=bucket_name,
+                      Bucket=os.environ['TF_FILES_GEN_BUCKET_NAME'],
                       Key='terraform_files.zip',
                       Body=zip_buffer.getvalue()
                   )
 
+                  response_data = {}
+                  response_data['BucketName'] = os.environ['TF_FILES_GEN_BUCKET_NAME']
+                  response_data['FileName'] = 'terraform_files.zip'
 
-                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                  cfnresponse.send(
+                          event=event, 
+                          context=context, 
+                          responseStatus=cfnresponse.SUCCESS, 
+                          responseData=response_data, 
+                          physicalResourceId='',
+                          noEcho=True
+                      )
               except Exception as e: # pylint: disable=broad-exception-caught
                   print(e)
                   cfnresponse.send(event, context, cfnresponse.FAILED, {})
@@ -322,8 +331,8 @@ Resources:
           - id: W89
             reason: "This lambda cannot run inside the vpc because is intended to run in the management account"  
 
-  rTFGenLambdaExecutionRoleWithS3Policy:
-    Condition: CreateAFTResources
+  rTerraformFilesLambdaExecutionRole:
+    Condition: cGenerateAFTFiles
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
@@ -357,29 +366,24 @@ Resources:
                 Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${pRepositoryName}-tf-files-generator-${AWS::AccountId}:*'
 
   rTerraformFilesGeneratorTrigger:
-    Condition: CreateAFTResources
+    Condition: cGenerateAFTFiles
     Type: Custom::TerraformFilesGenerator
     Properties:
       ServiceToken: !GetAtt rTerraformFilesGenerator.Arn
 
-  rCodeCommitAftRepoWithCode:
-    Condition: CreateAFTResources
+  rCodeCommitAftRepo:
     Type: AWS::CodeCommit::Repository
-    DependsOn: rTerraformFilesGeneratorTrigger
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       RepositoryName: !Ref pRepositoryName
       RepositoryDescription: The AFT setup repository
-      Code:
-        S3:
-          Bucket: !Sub "${pRepositoryName}-tf-files-generator-${AWS::AccountId}"
-          Key: "terraform_files.zip"
-
-  rCodeCommitAftRepoWithoutCode:
-    Condition: DoNotCreateAFTResources
-    Type: AWS::CodeCommit::Repository
-    Properties:
-      RepositoryName: !Ref pRepositoryName
-      RepositoryDescription: The AFT setup repository
+      Code: !If 
+        - cGenerateAFTFiles
+        - S3:
+            Bucket: !GetAtt rTerraformFilesGeneratorTrigger.BucketName
+            Key: !GetAtt rTerraformFilesGeneratorTrigger.FileName
+        - !Ref AWS::NoValue 
 
   rTerraformBackendBucket:
     #checkov:skip=CKV_AWS_18:There is no need to enable log in this bucket.

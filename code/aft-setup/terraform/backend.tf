@@ -4,7 +4,7 @@
 terraform {
   backend "s3" {
     bucket = "<bucket_name>"
-    key    = "aft-setup"
+    key    = "aft-setup.tfstate"
     region = "<region>"
   }
 }
