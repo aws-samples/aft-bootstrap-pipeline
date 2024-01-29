@@ -23,123 +23,133 @@ Metadata:
           - pAFTMainRegion
           - pAFTSecondaryRegion
           - pAFTMetricsReporting
-          - pAFTFeatureCloudtrailDataEvents
+          - pAFTFeatureCloudTrailDataEvents
           - pAFTFeatureEnterpriseSupport
           - pAFTFeatureDeleteDefaultVpcsEnabled
           - pTerraformVersion
     ParameterLabels:
       pRepositoryName:
-        default: Source repository to store AFT bootstrap module
+        default: Repository Name
       pBranchName:
-        default: Source repository branch
+        default: Branch Name
       pCodeBuildDockerImage:
-        default: CodeBuild docker base image version to run the pipeline
+        default: CodeBuild Docker Image
       pGenerateAFTFiles:
-        default: "Whether to generate default aft deployment files or not"
+        default: Generate AFT Files
       pLogArchiveAccountID:
-        default: "Log Archive Account ID in AWS Control Tower"
+        default: Log Archive Account ID
       pAuditAccountID:
-        default: "Audit Account ID in AWS Control Tower"
+        default: Audit Account ID
       pAFTAccountID:
-        default: "AFT Management Account ID"
+        default: AFT Management Account ID
       pAFTMainRegion:
-        default: "AFT Main Region (same as AWS Control Tower)"
+        default: AFT Main Region
       pAFTSecondaryRegion:
-        default: "AFT Secondary Region"
+        default: AFT Secondary Region
       pAFTMetricsReporting:
-        default: "Whether to enable AFT Metrics reporting or not (default: false)"
-      pAFTFeatureCloudtrailDataEvents:
-        default: "Whether to enable AWS CloudTrail data events or not (default: false)"
+        default: Enable AFT Metrics Reporting
+      pAFTFeatureCloudTrailDataEvents:
+        default: Enable AFT CloudTrail Data Events
       pAFTFeatureEnterpriseSupport:
-        default: "Whether to enable AWS Enterprise Support or not (default: false)"
+        default: Enable AFT Enterprise Support
       pAFTFeatureDeleteDefaultVpcsEnabled:
-        default: "Whether to delete default VPCs or not (default: false)"
+        default: Enable AFT Delete Default VPCs
       pAFTVersion:
-        default: "AFT version to be deployed (default: latest)"
+        default: AFT Version
       pTerraformVersion:
-        default: "Terraform version to be used on AFT pipelines (default: 1.5.7)"
+        default: AFT Terraform Version
 
 Parameters:
   # AFT Bootstrap Pipeline Params
   pRepositoryName:
     Type: String
     Default: aft-setup
-    Description: "Input the repository name"
+    Description: "Input the rsource repository name to store AFT bootstrap files."
   
   pBranchName:
     Type: String
     Default: main
-    Description: "Input the branch name"
+    Description: "Input the source repository branch name."
 
   pCodeBuildDockerImage:
     Type: String
     Default: "aws/codebuild/amazonlinux2-x86_64-standard:4.0"
-    Description: "Input the AWS CodeBuild docker base image"
+    Description: "Input the AWS CodeBuild docker base image version to run the pipeline."
 
   # Whether to gen files or not
   pGenerateAFTFiles:
     Type: String
     Default: true
-    AllowedValues: [true, false]
-    Description: "Change to false IF you don't want to generate the default files"
+    AllowedValues: 
+      - true
+      - false
+    Description: "Whether to generate default AFT deployment files or not. Change it to false IifF you don't want to generate the default files."
 
   # AWS Control Tower Required Params
   pLogArchiveAccountID:
     Type: String
-    Description: "Input the Log Archive Account ID"
+    Description: "Input the Log Archive Account ID in AWS Control Tower."
 
   pAuditAccountID:
     Type: String
-    Description: "Input the Audit Account ID"
+    Description: "Input the Audit Account ID in AWS Control Tower."
           
   pAFTAccountID:
     Type: String
-    Description: "Input the AFT Account ID"
+    Description: "Input the AFT Management Account ID."
 
   pAFTMainRegion:
     Type: String
-    Description: "Input the Control Tower Main Region (e.g. us-east-1)"
+    Description: "Input the AFT main region. It must be the same as AWS Control Tower. (e.g. us-east-1)"
 
   # AFT Optional Params
   pAFTSecondaryRegion:
     Type: String
-    Description: "Input the Control Tower Secondary Region (e.g. us-west-2)"
+    Description: "Input the AFT secondary region (e.g. us-west-2)"
 
   pAFTMetricsReporting:
     Type: String
-    Default: false
-    AllowedValues: [true, false]
-    Description: "Input the Metrics option"
+    Default: true
+    AllowedValues:
+      - true
+      - false
+    Description: "Input the AFT metrics reporting option. Select 'true' to enable it. (default: true)"
 
   # AFT Feature Flags Params
-  pAFTFeatureCloudtrailDataEvents:
+  pAFTFeatureCloudTrailDataEvents:
     Type: String
     Default: false
-    AllowedValues: [true, false]
-    Description: "Input the Cloudtrail option"
+    AllowedValues:
+      - true
+      - false
+    Description: "Input the AFT CloudTrail feature option. Select 'true' to enable it. (default: false)"
 
   pAFTFeatureEnterpriseSupport:
     Type: String
     Default: false
-    AllowedValues: [true, false]
-    Description: "Input the Enterprise Support option"
+    AllowedValues:
+      - true
+      - false
+    Description: "Input the AFT Enterprise Support feature option. Select 'true' to enable it. (default: false)"
 
   pAFTFeatureDeleteDefaultVpcsEnabled:
     Type: String
-    AllowedValues: [true, false]
     Default: false
-    Description: "Input the default VPC deletion option"
+    AllowedValues:
+      - true
+      - false
+    Description: "Input the AFT delete default VPCs feature option. Select 'true' to enable it. (default: false)"
 
   # Version Params
   pAFTVersion:
     Type: String
     Default: "latest"
-    Description: "Input the AFT version (according to https://github.com/aws-ia/terraform-aws-control_tower_account_factory/releases)"
+    Description: "Input the AFT version to be deployed. (default: latest). [see https://github.com/aws-ia/terraform-aws-control_tower_account_factory/releases]"
 
   pTerraformVersion:
     Type: String
     Default: "1.5.7"
-    Description: "Input the terraform version"
+    Description: "Input the Terraform version to be used on AFT pipelines. (default: 1.5.7)"
 
 Conditions:
   cGenerateAFTFiles: !Equals [ !Ref pGenerateAFTFiles, true ]
@@ -196,7 +206,7 @@ Resources:
           HOME_REGION: !Ref pAFTMainRegion
           SECONDARY_REGION: !Ref pAFTSecondaryRegion
           AFT_METRICS_REPORTING: !Ref pAFTMetricsReporting
-          AFT_FEATURE_CLOUDTRAIL_DATA_EVENTS: !Ref pAFTFeatureCloudtrailDataEvents
+          AFT_FEATURE_CLOUDTRAIL_DATA_EVENTS: !Ref pAFTFeatureCloudTrailDataEvents
           AFT_FEATURE_ENTERPRISE_SUPPORT: !Ref pAFTFeatureEnterpriseSupport
           AFT_FEATURE_DELETE_DEFAULT_VPCS_ENABLED: !Ref pAFTFeatureDeleteDefaultVpcsEnabled
           AFT_VERSION: !Ref pAFTVersion
