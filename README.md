@@ -1,5 +1,5 @@
 
-# AFT Bootstrap Pipeline
+# Account Factory for Terraform (AFT) bootstrap pipeline
 
 This repository introduces a streamlined and secure method for deploying Account Factory for Terraform (AFT) within the management account of AWS Organizations. Our approach centers around a CloudFormation template that simplifies and automates the AFT setup process. The template creates a Terraform pipeline, designed for ease of adaptability and maintenance.
 
