@@ -734,6 +734,7 @@ Resources:
 
   rCodePipeline:
     Type: AWS::CodePipeline::Pipeline
+    DependsOn: rCodeCommitAftRepo
     Properties:
       ArtifactStore:
         Type: S3
