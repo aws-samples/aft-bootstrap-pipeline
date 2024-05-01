@@ -606,6 +606,16 @@ Resources:
                 Condition:
                   StringEqualsIfExists:
                     events:creatorAccount: "${aws:PrincipalAccount}"
+        - PolicyName: SSMParameterPermissions
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:GetParametersByPath
+                Resource: !Sub "arn:${AWS::Partition}:ssm:*:*:parameter/*"
     Metadata:
       cfn_nag:
         rules_to_suppress:
