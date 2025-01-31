@@ -44,6 +44,7 @@ The following resources can be deployed by this solution:
 
 - Resource Limitations: Be aware of the AWS resource limits in your account. The deployment may create multiple resources, and hitting service limits could impede the process.
 - Version Compatibility: The template is designed for specific versions of Terraform and AWS services. Upgrading or changing versions may require template modifications.
+- Self-managed VCSs: This template doesn't support self-managed VCS services, such as GitHub Enterprise.
 
 ## Versions
 
