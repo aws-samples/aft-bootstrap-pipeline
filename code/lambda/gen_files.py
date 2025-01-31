@@ -9,47 +9,54 @@ environment variables and the type of request received from CloudFormation.
 Functions:
     handler(event, context): The main function that handles CloudFormation custom resource events.
 """
+
 import os
 import zipfile
 import io
+
 # pylint: disable=import-error
 import boto3
 import cfnresponse
+
 
 def handler(event, context):
     """
     Handle Lambda function invocations for CloudFormation custom resources.
 
-    This function processes CloudFormation custom resource events, generating 
-    Terraform configuration files and uploading them to an S3 bucket, 
+    This function processes CloudFormation custom resource events, generating
+    Terraform configuration files and uploading them to an S3 bucket,
     depending on the environment variables and CloudFormation request type.
 
     Args:
-        event (dict): The event passed by the AWS CloudFormation service, 
+        event (dict): The event passed by the AWS CloudFormation service,
                       which includes details about the request type (Create, Update, Delete).
         context (LambdaContext): Provides runtime information about the Lambda function execution.
 
     Returns:
         None: The function sends a response directly to CloudFormation and does not return a value.
     """
-    if event['RequestType'] == 'Delete':
+    if event["RequestType"] == "Delete":
         cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
         return
 
-    if event['RequestType'] == 'Update':
+    if event["RequestType"] == "Update":
         cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
         return
 
-    s3_client = boto3.client('s3')
+    s3_client = boto3.client("s3")
     # pylint: disable=line-too-long
-    aft_version = "" if os.environ['AFT_VERSION'] == 'latest' else f"?ref={os.environ['AFT_VERSION']}"
+    aft_version = (
+        ""
+        if os.environ["AFT_VERSION"] == "latest"
+        else f"?ref={os.environ['AFT_VERSION']}"
+    )
 
     # Create in-memory zip file
     zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
 
         # main.tf content
-        main_tf_content = f'''
+        main_tf_content = f"""
 # Copyright Amazon.com, Inc. or its affiliates. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
@@ -76,11 +83,11 @@ aft_feature_delete_default_vpcs_enabled = "{os.environ['AFT_FEATURE_DELETE_DEFAU
 terraform_version      = "{os.environ['TERRAFORM_VERSION']}"
 terraform_distribution = "oss"
 }}
-        '''
-        zip_file.writestr('terraform/main.tf', main_tf_content)
+        """
+        zip_file.writestr("terraform/main.tf", main_tf_content)
 
         # backend.tf content
-        backend_tf_content = f'''
+        backend_tf_content = f"""
 # Copyright Amazon.com, Inc. or its affiliates. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
@@ -91,31 +98,32 @@ backend "s3" {{
     region = "{os.environ['HOME_REGION']}"
 }}
 }}
-        '''
-        zip_file.writestr('terraform/backend.tf', backend_tf_content)
+        """
+        zip_file.writestr("terraform/backend.tf", backend_tf_content)
 
     try:
         # Move the pointer of zip_buffer to the beginning of the buffer
         zip_buffer.seek(0)
         # Upload zip file
         s3_client.put_object(
-            Bucket=os.environ['TF_FILES_GEN_BUCKET_NAME'],
-            Key='terraform_files.zip',
-            Body=zip_buffer.getvalue()
+            Bucket=os.environ["TF_FILES_GEN_BUCKET_NAME"],
+            Key="terraform_files.zip",
+            Body=zip_buffer.getvalue(),
         )
 
         response_data = {}
-        response_data['BucketName'] = os.environ['TF_FILES_GEN_BUCKET_NAME']
-        response_data['FileName'] = 'terraform_files.zip'
+        response_data["BucketName"] = os.environ["TF_FILES_GEN_BUCKET_NAME"]
+        response_data["FileName"] = "terraform_files.zip"
 
         cfnresponse.send(
             event=event,
             context=context,
             responseStatus=cfnresponse.SUCCESS,
             responseData=response_data,
-            physicalResourceId='',
-            noEcho=True
+            physicalResourceId="",
+            noEcho=True,
         )
-    except Exception as e: # pylint: disable=broad-exception-caught
+
+    except Exception as e:  # pylint: disable=broad-exception-caught
         print(e)
         cfnresponse.send(event, context, cfnresponse.FAILED, {})
