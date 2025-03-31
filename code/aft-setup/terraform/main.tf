@@ -24,11 +24,11 @@ module "aft" {
   terraform_version      = "<terraform_version>"
   terraform_distribution = "<terraform_distribution>"
 
-  # VCS variables 
-  # vcs_provider                                  = "<vcs_provider>" (only if you are not using AWS CodeCommit)
-  # account_request_repo_name                     = "<account_request_repo_name>"
-  # account_customizations_repo_name              = "<account_customizations_repo_name>"
-  # account_provisioning_customizations_repo_name = "<account_provisioning_customizations_repo_name>"
-  # global_customizations_repo_name               = "<global_customizations_repo_name>"
+  # VCS variables (only if you are not using AWS CodeCommit)
+  # vcs_provider                                  = "<github|githubenterprise|gitlab|gitlabselfmanaged|bitbucket>"
+  # account_request_repo_name                     = "<org-name>/aft-account-request"
+  # account_customizations_repo_name              = "<org-name>/aft-account-customizations"
+  # account_provisioning_customizations_repo_name = "<org-name>/aft-account-provisioning-customizations"
+  # global_customizations_repo_name               = "<org-name>/aft-global-customizations"
 
 }

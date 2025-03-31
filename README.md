@@ -7,10 +7,11 @@ Prioritizing security and data integrity, the Terraform state file is securely s
 
 In recognition of the management account's critical role in AWS Control Tower, this solution adheres to AWS best practices. It aims to provide an efficient, secure, and compliant process for AFT deployment.
 
-The following resources will be deployed by this solution:
+The following resources can be deployed by this solution:
 
 - CodeBuild
 - CodeCommit
+- CodeConnection
 - CodePipeline
 - EventBridge
 - IAM
@@ -21,8 +22,8 @@ The following resources will be deployed by this solution:
 
 - [Diagram](#diagram)
 - [Prerequisites](#prerequisites)
-    - [Limitations](#limitations)
-    - [Versions](#versions)
+- [Limitations](#limitations)
+- [Versions](#versions)
 - [Security](#security)
 - [License](#license)
 
@@ -43,11 +44,12 @@ The following resources will be deployed by this solution:
 
 - Resource Limitations: Be aware of the AWS resource limits in your account. The deployment may create multiple resources, and hitting service limits could impede the process.
 - Version Compatibility: The template is designed for specific versions of Terraform and AWS services. Upgrading or changing versions may require template modifications.
+- Self-managed VCSs: This template doesn't support self-managed VCS services, such as GitHub Enterprise.
 
 ## Versions
 
-- Terraform: >=1.5.7
-- AFT: >=1.11.1
+- Terraform: >=1.6.6
+- AFT: >=1.11
 
 ## Security
 

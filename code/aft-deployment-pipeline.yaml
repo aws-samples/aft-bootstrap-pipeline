@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: "AFT bootstrap deployment"
+Description: "AFT bootstrap pipeline"
 
 Metadata:
   AWS::CloudFormation::Interface:
@@ -7,15 +7,16 @@ Metadata:
       - Label:
           default: "AFT (Account Factory for Terraform) bootstrap pipeline"
         Parameters:
+          - pVCSProvider
           - pRepositoryName
           - pBranchName
           - pCodeBuildDockerImage
       - Label:
-          default: "Generate default AFT files?"
+          default: "Generate default AFT files? [ONLY for CodeCommit]"
         Parameters:
           - pGenerateAFTFiles
       - Label:
-          default: "AFT deployment file parameters"
+          default: "AFT deployment file parameters [ONLY for CodeCommit]"
         Parameters:
           - pLogArchiveAccountID
           - pAuditAccountID
@@ -28,6 +29,8 @@ Metadata:
           - pAFTFeatureDeleteDefaultVpcsEnabled
           - pTerraformVersion
     ParameterLabels:
+      pVCSProvider:
+        default: VCS Provider
       pRepositoryName:
         default: Repository Name
       pBranchName:
@@ -61,15 +64,25 @@ Metadata:
 
 Parameters:
   # AFT Bootstrap Pipeline Params
+  pVCSProvider:
+    Type: String
+    Default: GitHub
+    AllowedValues:
+      - CodeCommit
+      - GitHub
+      - Bitbucket
+      - GitLab
+    Description: "Select the VCS provider."
+
   pRepositoryName:
     Type: String
-    Default: aft-setup
-    Description: "Input the rsource repository name to store AFT bootstrap files."
+    Default: "myorg/aft-setup"
+    Description: "Enter the source repository name. For external VCS providers, inform the whole path, including organization name. (e.g my-github-org/my-repo)"
   
   pBranchName:
     Type: String
     Default: main
-    Description: "Input the source repository branch name."
+    Description: "Enter the source repository branch name."
 
   pCodeBuildDockerImage:
     Type: String
@@ -79,7 +92,7 @@ Parameters:
   # Whether to gen files or not
   pGenerateAFTFiles:
     Type: String
-    Default: true
+    Default: false
     AllowedValues: 
       - true
       - false
@@ -148,14 +161,15 @@ Parameters:
 
   pTerraformVersion:
     Type: String
-    Default: "1.5.7"
-    Description: "Input the Terraform version to be used on AFT pipelines. (default: 1.5.7)"
+    Default: "1.6.6"
+    Description: "Input the Terraform version to be used on AFT pipelines. (default: 1.6.6)"
 
 Conditions:
-  cGenerateAFTFiles: !Equals [ !Ref pGenerateAFTFiles, true ]
+  cCreateCodeCommitRepository: !Equals [ !Ref pVCSProvider, "CodeCommit" ]
+  cGenerateAFTFiles: !And [!Condition cCreateCodeCommitRepository, !Equals [ !Ref pGenerateAFTFiles, true ]]
+  cUseExternalVCS: !Not [!Condition cCreateCodeCommitRepository]
   
 Resources:
-
   rTerraformFilesBucket:
     #checkov:skip=CKV_AWS_18:There is no need to enable log in this bucket.
     Condition: cGenerateAFTFiles
@@ -167,7 +181,7 @@ Resources:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: 'AES256'
-      BucketName: !Sub "${pRepositoryName}-tf-files-generator-${AWS::AccountId}"
+      BucketName: !Sub "${AWS::StackName}-tf-files-generator-${AWS::AccountId}"
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true
@@ -191,12 +205,12 @@ Resources:
     DependsOn: rTerraformFilesBucket
     Type: AWS::Lambda::Function
     Properties:
-      ReservedConcurrentExecutions: 10
+      ReservedConcurrentExecutions: 0
       Handler: index.handler
       Role: !GetAtt rTerraformFilesLambdaExecutionRole.Arn
       Runtime: python3.10
       Timeout: 120
-      FunctionName: !Sub "${pRepositoryName}-tf-files-generator"
+      FunctionName: !Sub "${AWS::StackName}-tf-files-generator"
       Environment:
         Variables:
           MANAGEMENT_ACCOUNT_ID: !Ref "AWS::AccountId"
@@ -211,8 +225,8 @@ Resources:
           AFT_FEATURE_DELETE_DEFAULT_VPCS_ENABLED: !Ref pAFTFeatureDeleteDefaultVpcsEnabled
           AFT_VERSION: !Ref pAFTVersion
           TERRAFORM_VERSION: !Ref pTerraformVersion
-          TF_BACKEND_BUCKET_NAME: !Sub "${pRepositoryName}-tf-backend-${AWS::AccountId}"
-          TF_FILES_GEN_BUCKET_NAME: !Sub "${pRepositoryName}-tf-files-generator-${AWS::AccountId}"
+          TF_BACKEND_BUCKET_NAME: !Sub "${AWS::StackName}-tf-backend-${AWS::AccountId}"
+          TF_FILES_GEN_BUCKET_NAME: !Sub "${AWS::StackName}-tf-files-generator-${AWS::AccountId}"
       Code:
         ZipFile: |                
           """
@@ -360,7 +374,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - s3:PutObject
-                Resource: !Sub 'arn:aws:s3:::${rTerraformFilesBucket}/*'
+                Resource: !Sub 'arn:${AWS::Partition}:s3:::${rTerraformFilesBucket}/*'
         - PolicyName: LambdaCloudWatchLogsPolicy
           PolicyDocument:
             Version: '2012-10-17'
@@ -368,12 +382,12 @@ Resources:
               - Effect: Allow
                 Action:
                   - logs:CreateLogGroup
-                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*'
+                Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:*'
               - Effect: Allow
                 Action:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
-                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${pRepositoryName}-tf-files-generator-${AWS::AccountId}:*'
+                Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AWS::StackName}-tf-files-generator-${AWS::AccountId}:*'
 
   rTerraformFilesGeneratorTrigger:
     Condition: cGenerateAFTFiles
@@ -383,6 +397,7 @@ Resources:
 
   rCodeCommitAftRepo:
     Type: AWS::CodeCommit::Repository
+    Condition: cCreateCodeCommitRepository
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
@@ -394,6 +409,13 @@ Resources:
             Bucket: !GetAtt rTerraformFilesGeneratorTrigger.BucketName
             Key: !GetAtt rTerraformFilesGeneratorTrigger.FileName
         - !Ref AWS::NoValue 
+  
+  rCodeConnection:
+    Condition: cUseExternalVCS
+    Type: AWS::CodeConnections::Connection
+    Properties:
+      ConnectionName: "aft-vcs-connection"
+      ProviderType: !Ref pVCSProvider
 
   rTerraformBackendBucket:
     #checkov:skip=CKV_AWS_18:There is no need to enable log in this bucket.
@@ -405,7 +427,7 @@ Resources:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: 'AES256'
-      BucketName: !Sub "${pRepositoryName}-tf-backend-${AWS::AccountId}"
+      BucketName: !Sub "${AWS::StackName}-tf-backend-${AWS::AccountId}"
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true
@@ -431,7 +453,7 @@ Resources:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: 'AES256'
-      BucketName: !Sub "${pRepositoryName}-codepipeline-artifacts-${AWS::AccountId}"
+      BucketName: !Sub "${AWS::StackName}-codepipeline-artifacts-${AWS::AccountId}"
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true
@@ -484,7 +506,14 @@ Resources:
                   - s3:GetObject
                   - s3:GetObjectVersion
                   - s3:GetBucketVersioning
-                Resource: !Sub arn:${AWS::Partition}:s3:::${rCodePipelineArtifactBucket}/*         
+                Resource: !Sub arn:${AWS::Partition}:s3:::${rCodePipelineArtifactBucket}/*
+              - !If
+                - cUseExternalVCS
+                - Effect: Allow
+                  Action:
+                    - codestar-connections:UseConnection
+                  Resource: !Ref rCodeConnection
+                - !Ref "AWS::NoValue"  
     Metadata:
       cfn_nag:
         rules_to_suppress:
@@ -635,19 +664,18 @@ Resources:
         Image: !Ref pCodeBuildDockerImage
         PrivilegedMode: true
         EnvironmentVariables:
-          - Name: REPOSITORY_NAME
-            Value: !Ref pRepositoryName
-          - Name: REPOSITORY_BRANCH
-            Value: !Ref pBranchName
+          - Name: TERRAFORM_VERSION
+            Value: !Ref pTerraformVersion
+          # - Name: REPOSITORY_NAME
+          #   Value: !Ref pRepositoryName
+          # - Name: REPOSITORY_BRANCH
+          #   Value: !Ref pBranchName
       Name: "aft-bootstrap-pipeline-tf-plan"
       ServiceRole: !Ref rCodeBuildServiceRole
       Source:
         Type: CODEPIPELINE
         BuildSpec: |
           version: 0.2
-          env:
-            variables:
-              TERRAFORM_VERSION: "1.5.7"
           phases:
             install:
               commands:
@@ -698,19 +726,18 @@ Resources:
         Image: !Ref pCodeBuildDockerImage
         PrivilegedMode: true
         EnvironmentVariables:
-          - Name: REPOSITORY_NAME
-            Value: !Ref pRepositoryName
-          - Name: REPOSITORY_BRANCH
-            Value: !Ref pBranchName
+          - Name: TERRAFORM_VERSION
+            Value: !Ref pTerraformVersion
+          # - Name: REPOSITORY_NAME
+          #   Value: !Ref pRepositoryName
+          # - Name: REPOSITORY_BRANCH
+          #   Value: !Ref pBranchName
       Name: "aft-bootstrap-pipeline-tf-apply"
       ServiceRole: !Ref rCodeBuildServiceRole
       Source:
         Type: CODEPIPELINE
         BuildSpec: |
           version: 0.2
-          env:
-            variables:
-              TERRAFORM_VERSION: "1.5.7"
           phases:
             install:
               commands:
@@ -744,7 +771,6 @@ Resources:
 
   rCodePipeline:
     Type: AWS::CodePipeline::Pipeline
-    DependsOn: rCodeCommitAftRepo
     Properties:
       ArtifactStore:
         Type: S3
@@ -753,20 +779,35 @@ Resources:
       RoleArn: !GetAtt rCodePipelineServiceRole.Arn  
       Stages:
         - Name: Source
-          Actions:
-            - Name: !Sub "branch-${pBranchName}"
-              ActionTypeId:
-                Category: Source
-                Owner: AWS
-                Version: 1
-                Provider: CodeCommit
-              Configuration:
-                RepositoryName: !Ref pRepositoryName
-                BranchName: !Ref pBranchName
-                PollForSourceChanges: false
-              OutputArtifacts:
-                - Name: code
-              RunOrder: 1
+          Actions: 
+            - !If 
+              - cCreateCodeCommitRepository
+              - Name: !Ref pVCSProvider
+                ActionTypeId:
+                  Category: Source
+                  Owner: AWS
+                  Version: 1
+                  Provider: CodeCommit
+                Configuration:
+                  RepositoryName: !GetAtt rCodeCommitAftRepo.Name
+                  BranchName: !Ref pBranchName
+                  PollForSourceChanges: false
+                OutputArtifacts:
+                  - Name: code
+                RunOrder: 1
+              - Name: !Ref pVCSProvider
+                ActionTypeId:
+                  Category: Source
+                  Owner: AWS
+                  Version: 1
+                  Provider: CodeStarSourceConnection
+                Configuration:
+                  ConnectionArn: !Ref rCodeConnection
+                  FullRepositoryId: !Ref pRepositoryName
+                  BranchName: !Ref pBranchName
+                OutputArtifacts:
+                  - Name: code
+                RunOrder: 1
         - Name: Build
           Actions:
             - Name: terraform-plan
@@ -810,6 +851,7 @@ Resources:
 
   rEventRulePipelineCodeChange:
     Type: AWS::Events::Rule
+    Condition: cCreateCodeCommitRepository
     Properties:
       Name: aft-bootstrap-pipeline-code-change-trigger
       Description: "Rule to trigger the CodePipeline based on code changes"
@@ -835,6 +877,7 @@ Resources:
   
   rEventsRuleRole:
     Type: AWS::IAM::Role
+    Condition: cCreateCodeCommitRepository
     Properties:
       AssumeRolePolicyDocument:
         Version: 2012-10-17
