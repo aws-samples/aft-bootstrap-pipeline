@@ -28,6 +28,7 @@ Metadata:
           - pAFTFeatureEnterpriseSupport
           - pAFTFeatureDeleteDefaultVpcsEnabled
           - pTerraformVersion
+          - pAFTVersion
     ParameterLabels:
       pVCSProvider:
         default: VCS Provider
@@ -561,6 +562,11 @@ Resources:
                   - !Sub "arn:${AWS::Partition}:s3:::${rCodePipelineArtifactBucket}/*"
                   - !Sub "arn:${AWS::Partition}:s3:::${rTerraformBackendBucket}"
                   - !Sub "arn:${AWS::Partition}:s3:::${rTerraformBackendBucket}/*"
+              - Effect: Allow
+                Action:
+                  - s3:DeleteObject
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:s3:::${rTerraformBackendBucket}/*.tflock"
         - PolicyName: CodeBuildPermissions
           PolicyDocument:
             Version: 2012-10-17
