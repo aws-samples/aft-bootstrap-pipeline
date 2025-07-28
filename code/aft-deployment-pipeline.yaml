@@ -202,11 +202,11 @@ Resources:
     #checkov:skip=CKV_AWS_117:This lambda cannot run inside the vpc because is intended to run in the management account
     #checkov:skip=CKV_AWS_116:This lambda doesn't need DLQ because it runs inside the cfn
     #checkov:skip=CKV_AWS_173:The default AWS Encryption is enough for this lambda
+    #checkov:skip=CKV_AWS_115:This is a one-time Lambda execution, it doesn't need reserved concurrent executions
     Condition: cGenerateAFTFiles
     DependsOn: rTerraformFilesBucket
     Type: AWS::Lambda::Function
     Properties:
-      ReservedConcurrentExecutions: 0
       Handler: index.handler
       Role: !GetAtt rTerraformFilesLambdaExecutionRole.Arn
       Runtime: python3.10
@@ -316,11 +316,11 @@ Resources:
           # SPDX-License-Identifier: Apache-2.0
 
           terraform {{
-          backend "s3" {{
+            backend "s3" {{
               bucket = "{os.environ['TF_BACKEND_BUCKET_NAME']}"
               key    = "aft-setup.tfstate"
               region = "{os.environ['HOME_REGION']}"
-          }}
+            }}
           }}
                   '''
                   zip_file.writestr('terraform/backend.tf', backend_tf_content)
